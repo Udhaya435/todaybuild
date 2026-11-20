@@ -1,0 +1,61 @@
+name: Build Nova Live Voicemail APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Nova Live Voicemail APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Install Mobile Dependencies
+        run: |
+          cd mobile
+          npm install --legacy-peer-deps
+
+      - name: Bundle React Native JavaScript Assets
+        run: |
+          cd mobile
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle --platform android --dev false --entry-file index.js --bundle-output android/app/src/main/assets/index.android.bundle --assets-dest android/app/src/main/res
+          ls -la android/app/src/main/assets/index.android.bundle
+
+      - name: Generate Android Debug Keystore
+        run: |
+          keytool -genkey -v -keystore mobile/android/app/debug.keystore -alias androiddebugkey -storepass android -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Build Android APK
+        run: |
+          cd mobile/android
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovaLiveVoicemail-Debug-APK
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14

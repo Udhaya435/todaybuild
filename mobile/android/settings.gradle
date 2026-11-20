@@ -1,0 +1,2 @@
+rootProject.name = 'NovaLiveVoicemail'
+include ':app'

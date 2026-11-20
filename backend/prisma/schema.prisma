@@ -1,0 +1,192 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum VoicemailStatus {
+  RECORDING
+  COMPLETED
+  FAILED
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum GreetingType {
+  CUSTOM_RECORDED
+  AI_GENERATED
+  UPLOADED
+  DEFAULT
+}
+
+model User {
+  id                    String                 @id @default(uuid())
+  email                 String                 @unique
+  passwordHash          String
+  fullName              String
+  phoneNumber           String                 @unique
+  role                  Role                   @default(USER)
+  voicemailNumber       String?                // Virtual telephony number assigned for forwarding
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+
+  voicemails            Voicemail[]
+  contacts              Contact[]
+  greetings             VoicemailGreeting[]
+  telephonyConfig       TelephonyConfiguration?
+  settings              UserSettings?
+  notifications         Notification[]
+
+  @@index([phoneNumber])
+}
+
+model Contact {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  phoneNumber String
+  avatarUrl   String?
+  isVip       Boolean   @default(false)
+  autoScreen  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  voicemails  Voicemail[]
+
+  @@unique([userId, phoneNumber])
+  @@index([userId, phoneNumber])
+}
+
+model Voicemail {
+  id              String            @id @default(uuid())
+  userId          String
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contactId       String?
+  contact         Contact?          @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  callerNumber    String
+  callerName      String?
+  callSid         String?           @unique // Telephony provider Call SID
+  recordingSid    String?           @unique // Telephony provider Recording SID
+  audioUrl        String?           // Secure cloud storage URL / S3 or signed URL
+  durationSeconds Int               @default(0)
+  status          VoicemailStatus   @default(RECORDING)
+  isRead          Boolean           @default(false)
+  isArchived      Boolean           @default(false)
+  isLive          Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  transcript      VoicemailTranscript?
+  summary         VoicemailSummary?
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, isRead])
+  @@index([callSid])
+}
+
+model VoicemailTranscript {
+  id               String           @id @default(uuid())
+  voicemailId      String           @unique
+  voicemail        Voicemail        @relation(fields: [voicemailId], references: [id], onDelete: Cascade)
+  rawText          String           @db.Text
+  language         String           @default("en")
+  confidence       Float            @default(1.0)
+  wordTimestamps   Json?            // Array of { word: string, start: number, end: number, confidence: number }
+  processingStatus ProcessingStatus @default(PENDING)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+}
+
+model VoicemailSummary {
+  id                String           @id @default(uuid())
+  voicemailId       String           @unique
+  voicemail         Voicemail        @relation(fields: [voicemailId], references: [id], onDelete: Cascade)
+  summaryText       String           @db.Text
+  callerPurpose     String?
+  appointmentDates  Json?            // Array of extracted dates / times
+  callbackRequested Boolean          @default(false)
+  callbackNumber    String?
+  keyPoints         Json?            // Array of strings
+  suggestedReplies  Json?            // Array of { en: string, ta: string }
+  sentiment         String?
+  processingStatus  ProcessingStatus @default(PENDING)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+}
+
+model VoicemailGreeting {
+  id               String       @id @default(uuid())
+  userId           String
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title            String
+  greetingType     GreetingType @default(DEFAULT)
+  audioUrl         String?
+  transcriptText   String?      @db.Text
+  language         String       @default("en") // en, ta (Tamil), ta-Latn (Tanglish)
+  voiceId          String?      // AI voice identifier for TTS
+  isDefault        Boolean      @default(false)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([userId, isDefault])
+}
+
+model TelephonyConfiguration {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider              String   @default("twilio") // twilio, telnyx, sip
+  accountSid            String?
+  authToken             String?
+  assignedVirtualNumber String?  // The number calls are forwarded to
+  forwardingCarrier     String?  // airtel, jio, vi, att, verizon, tmobile
+  forwardingStatus      Boolean  @default(false) // Activated or not
+  ringDurationBeforeVM  Int      @default(20) // in seconds
+  enableLiveStreaming   Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  body        String
+  type        String   @default("VOICEMAIL_NEW") // VOICEMAIL_NEW, LIVE_INCOMING, TRANSCRIPTION_READY
+  data        Json?
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model UserSettings {
+  id                      String   @id @default(uuid())
+  userId                  String   @unique
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  theme                   String   @default("dark") // dark (#0B0D12) or light
+  preferredLanguage       String   @default("en") // en, ta
+  enableCallScreening     Boolean  @default(true)
+  silenceUnknownCallers   Boolean  @default(false)
+  autoTranscribe          Boolean  @default(true)
+  autoSummarize           Boolean  @default(true)
+  pushNotifications       Boolean  @default(true)
+  playbackSpeedDefault    Float    @default(1.0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
